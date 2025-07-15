@@ -32,29 +32,35 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
     error: mapError,
   })
 
+  // Callback handlers (to be set by parent component)
+  const [onFeatureSelect, setOnFeatureSelect] = useState<((node: GraphNode) => void) | null>(null)
+  const [onFeatureDeselect, setOnFeatureDeselect] = useState<(() => void) | null>(null)
+
   // =========================================================================
-  // 1.  DYNAMICALLY LOAD MAPBOX-GL (ESM) THE FIRST TIME WE NEED IT
+  // 1.  INITIALIZE MAPBOX MAP
   // =========================================================================
   useEffect(() => {
-    if (!mapboxToken || !mapContainer.current || mapRef.current || initializationAttempted.current) return
-    initializationAttempted.current = true
+    if (!mapboxToken || !mapContainer.current || mapRef.current) return
+
+    console.log("Starting Mapbox initialization...")
     setIsMapLoading(true)
     setMapError(null)
 
     try {
-      console.log("Starting Mapbox initialization with npm package...")
-
       // Set the access token
       mapboxgl.accessToken = mapboxToken
 
       console.log("Creating Mapbox instance...")
       const mapInstance = new mapboxgl.Map({
-        container: mapContainer.current!,
+        container: mapContainer.current,
         style: "mapbox://styles/mapbox/satellite-streets-v12",
         center: [-53.975, 5.487], // French Guiana coordinates
         zoom: 12,
         attributionControl: false,
       })
+
+      // Store reference immediately
+      mapRef.current = mapInstance
 
       // Add navigation controls
       mapInstance.addControl(new mapboxgl.NavigationControl(), "top-right")
@@ -68,7 +74,6 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
       // Handle map load
       mapInstance.on("load", () => {
         console.log("Map loaded successfully!")
-        mapRef.current = mapInstance
         setMap(mapInstance)
         setIsMapLoading(false)
         setMapError(null)
@@ -81,26 +86,24 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
         setIsMapLoading(false)
       })
 
-      // Handle style load
-      mapInstance.on("style.load", () => {
-        console.log("Map style loaded")
-      })
-
       // Timeout fallback
-      setTimeout(() => {
-        if (isMapLoading && !mapRef.current) {
+      const timeout = setTimeout(() => {
+        if (!map) {
           console.error("Map loading timeout")
           setMapError("Map loading timeout - please check your token and internet connection")
           setIsMapLoading(false)
         }
-      }, 15000) // 15 second timeout
+      }, 10000) // 10 second timeout
+
+      return () => {
+        clearTimeout(timeout)
+      }
     } catch (error) {
       console.error("Error initializing map:", error)
       setMapError(`Initialization error: ${error instanceof Error ? error.message : "Unknown error"}`)
       setIsMapLoading(false)
-      initializationAttempted.current = false // Allow retry
     }
-  }, [mapboxToken, isMapLoading])
+  }, [mapboxToken]) // Remove isMapLoading from dependencies
 
   // =========================================================================
   // 2.  CONVERT NODES ➜ GEO FEATURES WHEN THE DATA CHANGES
@@ -119,88 +122,17 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
     setHasGeoData(features.length > 0)
   }, [data]) // Only depend on data, not map
 
-  // =========================================================================
-  // 3.  PUSH FEATURES INTO THE MAP / (RE)ADD SOURCE + LAYERS
-  // =========================================================================
-  useEffect(() => {
-    if (!map || geoFeatures.length === 0) return
-
-    console.log("Updating map with geo features...")
-    try {
-      const geoJsonData = createMapboxSource(geoFeatures)
-      const source = map.getSource("geo-features")
-
-      if (source) {
-        // Update existing source
-        ;(source as mapboxgl.GeoJSONSource).setData(geoJsonData)
-        console.log("Updated existing map source")
-      } else {
-        // Add new source and layers
-        console.log("Adding new map source and layers...")
-        map.addSource("geo-features", {
-          type: "geojson",
-          data: geoJsonData,
-        })
-
-        // Wait for source to be loaded before adding layers
-        const checkSourceLoaded = () => {
-          if (map.isSourceLoaded("geo-features")) {
-            console.log("Source loaded, adding layers...")
-            addMapLayers(map)
-            setupMapInteractions(map)
-
-            // Fit map to show all features
-            const bounds = calculateBounds(geoFeatures)
-            if (bounds) {
-              console.log("Fitting map to bounds...")
-              fitMapToBounds(map, bounds)
-            }
-          } else {
-            // Check again in a bit
-            setTimeout(checkSourceLoaded, 100)
-          }
-        }
-        checkSourceLoaded()
-      }
-    } catch (error) {
-      console.error("Error updating map data:", error)
-      setMapError(`Data update error: ${error instanceof Error ? error.message : "Unknown error"}`)
-    }
-  }, [map, geoFeatures])
-
-  // =========================================================================
-  // 4.  HANDLE EXTERNAL NODE SELECTION (FROM THE GRAPH VIEW)
-  // =========================================================================
-  useEffect(() => {
-    if (!map || !selectedNodeId) {
-      // Clear previous selection
-      if (selectedFeatureId) {
-        clearFeatureSelection(map, selectedFeatureId)
-        setSelectedFeatureId(null)
-      }
-      return
-    }
-
-    const feature = geoFeatures.find((f) => f.id === selectedNodeId)
-    if (feature) {
-      selectFeatureOnMap(map, feature.id)
-      setSelectedFeatureId(feature.id)
-
-      // Center map on selected feature
-      map.flyTo({
-        center: [feature.coordinates.longitude, feature.coordinates.latitude],
-        zoom: Math.max(map.getZoom(), 14),
-        duration: 1000,
-      })
-    }
-  }, [selectedNodeId, map, geoFeatures, selectedFeatureId])
-
   const setupMapInteractions = useCallback(
     (mapInstance: mapboxgl.Map) => {
       console.log("Setting up map interactions...")
       const layers = ["trees", "plots", "regions"]
 
       layers.forEach((layer) => {
+        // Remove existing listeners first
+        mapInstance.off("mouseenter", layer)
+        mapInstance.off("mouseleave", layer)
+        mapInstance.off("click", layer)
+
         // Change cursor on hover
         mapInstance.on("mouseenter", layer, () => {
           mapInstance.getCanvas().style.cursor = "pointer"
@@ -235,6 +167,7 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
       })
 
       // Handle map clicks (deselect)
+      mapInstance.off("click") // Remove existing listener
       mapInstance.on("click", (e) => {
         // Check if click was on a feature
         const features = mapInstance.queryRenderedFeatures(e.point, {
@@ -250,8 +183,75 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
         }
       })
     },
-    [geoFeatures, selectedFeatureId],
+    [geoFeatures, selectedFeatureId, onFeatureSelect, onFeatureDeselect],
   )
+
+  // =========================================================================
+  // 3.  PUSH FEATURES INTO THE MAP / (RE)ADD SOURCE + LAYERS
+  // =========================================================================
+  useEffect(() => {
+    if (!map || geoFeatures.length === 0) return
+
+    console.log("Updating map with geo features...")
+    try {
+      const geoJsonData = createMapboxSource(geoFeatures)
+      const source = map.getSource("geo-features")
+
+      if (source) {
+        // Update existing source
+        ;(source as mapboxgl.GeoJSONSource).setData(geoJsonData)
+        console.log("Updated existing map source")
+      } else {
+        // Add new source and layers
+        console.log("Adding new map source and layers...")
+        map.addSource("geo-features", {
+          type: "geojson",
+          data: geoJsonData,
+        })
+
+        // Add layers immediately after source
+        addMapLayers(map)
+        setupMapInteractions(map)
+
+        // Fit map to show all features
+        const bounds = calculateBounds(geoFeatures)
+        if (bounds) {
+          console.log("Fitting map to bounds...")
+          fitMapToBounds(map, bounds)
+        }
+      }
+    } catch (error) {
+      console.error("Error updating map data:", error)
+      setMapError(`Data update error: ${error instanceof Error ? error.message : "Unknown error"}`)
+    }
+  }, [map, geoFeatures, setupMapInteractions])
+
+  // =========================================================================
+  // 4.  HANDLE EXTERNAL NODE SELECTION (FROM THE GRAPH VIEW)
+  // =========================================================================
+  useEffect(() => {
+    if (!map || !selectedNodeId) {
+      // Clear previous selection
+      if (selectedFeatureId) {
+        clearFeatureSelection(map, selectedFeatureId)
+        setSelectedFeatureId(null)
+      }
+      return
+    }
+
+    const feature = geoFeatures.find((f) => f.id === selectedNodeId)
+    if (feature) {
+      selectFeatureOnMap(map, feature.id)
+      setSelectedFeatureId(feature.id)
+
+      // Center map on selected feature
+      map.flyTo({
+        center: [feature.coordinates.longitude, feature.coordinates.latitude],
+        zoom: Math.max(map.getZoom(), 14),
+        duration: 1000,
+      })
+    }
+  }, [selectedNodeId, map, geoFeatures, selectedFeatureId])
 
   const selectFeatureOnMap = useCallback((mapInstance: mapboxgl.Map, featureId: string) => {
     try {
@@ -268,10 +268,6 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
       console.error("Error clearing feature selection:", error)
     }
   }, [])
-
-  // Callback handlers (to be set by parent component)
-  const [onFeatureSelect, setOnFeatureSelect] = useState<((node: GraphNode) => void) | null>(null)
-  const [onFeatureDeselect, setOnFeatureDeselect] = useState<(() => void) | null>(null)
 
   const selectNodeOnMap = useCallback(
     (nodeId: string) => {
