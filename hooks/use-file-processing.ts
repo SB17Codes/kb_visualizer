@@ -47,6 +47,9 @@ export function useFileProcessing() {
 
         setIsProcessed(true)
         console.log("=== FILE PROCESSING COMPLETED ===")
+        console.log(
+          `Loaded ${progressiveLoading.data?.nodes.length || 0} nodes and ${progressiveLoading.data?.links.length || 0} links.`,
+        )
       } catch (error) {
         setIsProcessed(false)
         console.error("=== FILE PROCESSING ERROR ===", error)

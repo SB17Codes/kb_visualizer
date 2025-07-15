@@ -1,6 +1,5 @@
 "use client"
 import { useState, useEffect, useMemo } from "react"
-import { Toaster } from "@/components/ui/toaster"
 import { NavigationBreadcrumbs } from "@/components/navigation/navigation-breadcrumbs"
 import { AppHeader } from "@/components/layout/app-header"
 import { ProgressBar } from "@/components/layout/progress-bar"
@@ -108,7 +107,6 @@ export default function TTLVisualizerPage() {
 
   return (
     <>
-      <Toaster />
       <div className="flex flex-col h-screen bg-muted/40 font-sans">
         <AppHeader
           tripleLimit={tripleLimit}
