@@ -72,8 +72,8 @@ function classifyEntity(
     return "tree"
   }
 
-  // Check for forest plot (BAFOG pattern in URI or explicit plot naming)
-  if (uri.includes("BAFOG") || uri.includes("Plot_")) {
+  // Check for forest plot (BAFOG pattern in URI)
+  if (uri.includes("BAFOG")) {
     return "plot"
   }
 
@@ -131,7 +131,6 @@ export function parseTTL(ttlString: string, limit = 1000): Promise<GraphData> {
     const links: GraphLink[] = []
     const entityTypes = new Map<string, Set<string>>()
     const entityProperties = new Map<string, any[]>()
-    const geometryMap = new Map<string, string>() // Maps geometry URI to WKT string
     let prefixes: N3.Prefixes = {}
     let totalQuadCount = 0
 
@@ -157,11 +156,6 @@ export function parseTTL(ttlString: string, limit = 1000): Promise<GraphData> {
             entityTypes.get(subjectUri)!.add(quad.object.value)
           }
 
-          // Collect WKT geometries
-          if (quad.predicate.value === "http://www.opengis.net/ont/geosparql#asWKT") {
-            geometryMap.set(subjectUri, quad.object.value)
-          }
-
           entityProperties.get(subjectUri)!.push({
             predicate: quad.predicate.value,
             object: quad.object,
@@ -172,9 +166,6 @@ export function parseTTL(ttlString: string, limit = 1000): Promise<GraphData> {
         prefixes = p || {}
 
         try {
-          console.log("Found geometries:", geometryMap.size)
-          console.log("Geometry map:", Array.from(geometryMap.entries()).slice(0, 5))
-
           const addNode = (term: N3.Term) => {
             if (!nodes.has(term.value)) {
               let type: "uri" | "literal" | "blank" = "uri"
@@ -203,27 +194,22 @@ export function parseTTL(ttlString: string, limit = 1000): Promise<GraphData> {
                 }
               })
 
-              // Extract geometry information by following geo:hasGeometry links
+              // Extract geometry information
               let geometryType: string | undefined
               let coordinates: string | undefined
-
-              // Look for geo:hasGeometry relationships
-              const geometryUri = props.find(
-                (prop) => prop.predicate === "http://www.opengis.net/ont/geosparql#hasGeometry",
-              )?.object.value
-
-              if (geometryUri && geometryMap.has(geometryUri)) {
-                const wkt = geometryMap.get(geometryUri)!
-                console.log(`Found geometry for ${getTermName(term, prefixes)}: ${wkt}`)
-
-                if (wkt.startsWith("POINT")) {
-                  geometryType = "Point"
-                  coordinates = wkt // Store the full WKT string
-                } else if (wkt.startsWith("POLYGON")) {
-                  geometryType = "Polygon"
-                  coordinates = wkt // Store the full WKT string, not just "Polygon coordinates"
+              props.forEach((prop) => {
+                if (prop.predicate === "http://www.opengis.net/ont/geosparql#asWKT") {
+                  const wkt = prop.object.value
+                  if (wkt.startsWith("POINT")) {
+                    geometryType = "Point"
+                    const coordMatch = wkt.match(/POINT$$([^)]+)$$/)
+                    coordinates = coordMatch?.[1]
+                  } else if (wkt.startsWith("POLYGON")) {
+                    geometryType = "Polygon"
+                    coordinates = "Polygon coordinates"
+                  }
                 }
-              }
+              })
 
               // Extract plot information for BAFOG plots
               const plotInfo: Record<string, string> = {}
@@ -286,7 +272,7 @@ export function parseTTL(ttlString: string, limit = 1000): Promise<GraphData> {
             addNode(subject)
             addNode(object)
 
-            // Only add links between nodes that exist (skip geometry nodes)
+            // Only add links between nodes that exist
             if (nodes.has(subject.value) && nodes.has(object.value)) {
               const relationshipType = classifyRelationship(predicate.value)
 
@@ -308,14 +294,6 @@ export function parseTTL(ttlString: string, limit = 1000): Promise<GraphData> {
           console.log(
             `Parsed ${result.nodes.length} nodes and ${result.links.length} links from ${totalQuadCount} triples`,
           )
-
-          // Log nodes with coordinates
-          const nodesWithCoords = result.nodes.filter((n) => n.coordinates)
-          console.log(`Found ${nodesWithCoords.length} nodes with coordinates:`)
-          nodesWithCoords.slice(0, 5).forEach((node) => {
-            console.log(`- ${node.name}: ${node.coordinates} (${node.entityType})`)
-          })
-
           resolve(result)
         } catch (processingError) {
           console.error("Error processing parsed data:", processingError)
