@@ -9,7 +9,9 @@ const nextConfig = {
     
     return config
   },
-  transpilePackages: ['mapbox-gl'],
+  // These ESM packages contain `window`, `document`, and worker code that
+  // must be transpiled for both webpack & the edge runtime.
+  transpilePackages: ['mapbox-gl', 'react-mapbox-gl'],
   eslint: {
     ignoreDuringBuilds: true,
   },
