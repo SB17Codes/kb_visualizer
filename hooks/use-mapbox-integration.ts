@@ -1,14 +1,15 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
+import mapboxgl from "mapbox-gl"
 import { extractGeoFeatures, calculateBounds } from "@/lib/geo-utils"
-import { createMapboxSource, addMapLayers } from "@/lib/mapbox-utils"
-import type { GraphData } from "@/lib/types"
+import { createMapboxSource, addMapLayers, fitMapToBounds } from "@/lib/mapbox-utils"
+import type { GraphData, GraphNode } from "@/lib/types"
 import type { GeoFeature } from "@/lib/geo-utils"
 
 export function useMapboxIntegration(data: GraphData | null, selectedNodeId: string | null) {
   // ---- state --------------------------------------------------------------
-  const [map, setMap] = useState<any>(null)
+  const [map, setMap] = useState<mapboxgl.Map | null>(null)
   const [geoFeatures, setGeoFeatures] = useState<GeoFeature[]>([])
   const [hasGeoData, setHasGeoData] = useState(false)
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null)
@@ -17,71 +18,106 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
 
   // ---- refs ---------------------------------------------------------------
   const mapContainer = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<any>(null) // will hold the map instance
-  const mbRef = useRef<any>(null) // will hold the loaded mapbox-gl module
-  const initTried = useRef(false)
+  const mapRef = useRef<mapboxgl.Map | null>(null)
+  const initializationAttempted = useRef(false)
 
   // ---- token --------------------------------------------------------------
-  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
+
+  console.log("Mapbox integration state:", {
+    hasToken: !!mapboxToken,
+    tokenStart: mapboxToken?.substring(0, 20),
+    hasMap: !!map,
+    isLoading: isMapLoading,
+    error: mapError,
+  })
 
   // =========================================================================
   // 1.  DYNAMICALLY LOAD MAPBOX-GL (ESM) THE FIRST TIME WE NEED IT
   // =========================================================================
   useEffect(() => {
-    if (!token || !mapContainer.current || initTried.current || mapRef.current) return
-    initTried.current = true
+    if (!mapboxToken || !mapContainer.current || mapRef.current || initializationAttempted.current) return
+    initializationAttempted.current = true
     setIsMapLoading(true)
-    ;(async () => {
-      try {
-        // Load the ESM build – esm.sh sets correct CORS + MIME headers
-        const { default: mapboxgl } = await import("https://esm.sh/mapbox-gl@3.4.0")
-        mbRef.current = mapboxgl
-        mapboxgl.accessToken = token
+    setMapError(null)
 
-        const mapInstance = new mapboxgl.Map({
-          container: mapContainer.current!,
-          style: "mapbox://styles/mapbox/satellite-streets-v12",
-          center: [-53.975, 5.487],
-          zoom: 12,
-          attributionControl: false,
-        })
+    try {
+      console.log("Starting Mapbox initialization with npm package...")
 
-        mapInstance.addControl(new mapboxgl.NavigationControl(), "top-right")
-        mapInstance.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right")
+      // Set the access token
+      mapboxgl.accessToken = mapboxToken
 
-        mapInstance.on("load", () => {
-          mapRef.current = mapInstance
-          setMap(mapInstance)
-          setIsMapLoading(false)
-        })
+      console.log("Creating Mapbox instance...")
+      const mapInstance = new mapboxgl.Map({
+        container: mapContainer.current!,
+        style: "mapbox://styles/mapbox/satellite-streets-v12",
+        center: [-53.975, 5.487], // French Guiana coordinates
+        zoom: 12,
+        attributionControl: false,
+      })
 
-        mapInstance.on("error", (e: any) => {
-          console.error("Map error:", e)
-          setMapError(e.error?.message || "Unknown Mapbox error")
-          setIsMapLoading(false)
-        })
-      } catch (err) {
-        console.error("Failed to initialise Mapbox-GL:", err)
-        setMapError((err as Error).message ?? "Unknown error")
+      // Add navigation controls
+      mapInstance.addControl(new mapboxgl.NavigationControl(), "top-right")
+      mapInstance.addControl(
+        new mapboxgl.AttributionControl({
+          compact: true,
+        }),
+        "bottom-right",
+      )
+
+      // Handle map load
+      mapInstance.on("load", () => {
+        console.log("Map loaded successfully!")
+        mapRef.current = mapInstance
+        setMap(mapInstance)
         setIsMapLoading(false)
-        initTried.current = false // allow retry
-      }
-    })()
-  }, [token])
+        setMapError(null)
+      })
+
+      // Handle map errors
+      mapInstance.on("error", (e) => {
+        console.error("Map error:", e)
+        setMapError(`Map error: ${e.error?.message || "Unknown error"}`)
+        setIsMapLoading(false)
+      })
+
+      // Handle style load
+      mapInstance.on("style.load", () => {
+        console.log("Map style loaded")
+      })
+
+      // Timeout fallback
+      setTimeout(() => {
+        if (isMapLoading && !mapRef.current) {
+          console.error("Map loading timeout")
+          setMapError("Map loading timeout - please check your token and internet connection")
+          setIsMapLoading(false)
+        }
+      }, 15000) // 15 second timeout
+    } catch (error) {
+      console.error("Error initializing map:", error)
+      setMapError(`Initialization error: ${error instanceof Error ? error.message : "Unknown error"}`)
+      setIsMapLoading(false)
+      initializationAttempted.current = false // Allow retry
+    }
+  }, [mapboxToken, isMapLoading])
 
   // =========================================================================
   // 2.  CONVERT NODES ➜ GEO FEATURES WHEN THE DATA CHANGES
   // =========================================================================
   useEffect(() => {
+    console.log("Processing geo features from data...")
     if (!data) {
       setGeoFeatures([])
       setHasGeoData(false)
       return
     }
-    const feats = extractGeoFeatures(data.nodes)
-    setGeoFeatures(feats)
-    setHasGeoData(feats.length > 0)
-  }, [data])
+
+    const features = extractGeoFeatures(data.nodes)
+    console.log(`Extracted ${features.length} geo features`)
+    setGeoFeatures(features)
+    setHasGeoData(features.length > 0)
+  }, [data]) // Only depend on data, not map
 
   // =========================================================================
   // 3.  PUSH FEATURES INTO THE MAP / (RE)ADD SOURCE + LAYERS
@@ -89,27 +125,46 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
   useEffect(() => {
     if (!map || geoFeatures.length === 0) return
 
-    const srcId = "geo-features"
-    const geojson = createMapboxSource(geoFeatures)
+    console.log("Updating map with geo features...")
+    try {
+      const geoJsonData = createMapboxSource(geoFeatures)
+      const source = map.getSource("geo-features")
 
-    if (map.getSource(srcId)) {
-      ;(map.getSource(srcId) as any).setData(geojson)
-    } else {
-      map.addSource(srcId, { type: "geojson", data: geojson })
-      addMapLayers(map)
-      const bounds = calculateBounds(geoFeatures)
-      if (bounds) {
-        map.fitBounds(
-          [
-            [bounds.minLng, bounds.minLat],
-            [bounds.maxLng, bounds.maxLat],
-          ],
-          {
-            padding: 50,
-            maxZoom: 15,
-          },
-        )
+      if (source) {
+        // Update existing source
+        ;(source as mapboxgl.GeoJSONSource).setData(geoJsonData)
+        console.log("Updated existing map source")
+      } else {
+        // Add new source and layers
+        console.log("Adding new map source and layers...")
+        map.addSource("geo-features", {
+          type: "geojson",
+          data: geoJsonData,
+        })
+
+        // Wait for source to be loaded before adding layers
+        const checkSourceLoaded = () => {
+          if (map.isSourceLoaded("geo-features")) {
+            console.log("Source loaded, adding layers...")
+            addMapLayers(map)
+            setupMapInteractions(map)
+
+            // Fit map to show all features
+            const bounds = calculateBounds(geoFeatures)
+            if (bounds) {
+              console.log("Fitting map to bounds...")
+              fitMapToBounds(map, bounds)
+            }
+          } else {
+            // Check again in a bit
+            setTimeout(checkSourceLoaded, 100)
+          }
+        }
+        checkSourceLoaded()
       }
+    } catch (error) {
+      console.error("Error updating map data:", error)
+      setMapError(`Data update error: ${error instanceof Error ? error.message : "Unknown error"}`)
     }
   }, [map, geoFeatures])
 
@@ -117,24 +172,131 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
   // 4.  HANDLE EXTERNAL NODE SELECTION (FROM THE GRAPH VIEW)
   // =========================================================================
   useEffect(() => {
-    if (!map || !selectedNodeId) return
-
-    const feature = geoFeatures.find((f) => f.id === selectedNodeId)
-    if (!feature) return
-
-    if (selectedFeatureId && selectedFeatureId !== feature.id) {
-      map.setFeatureState({ source: "geo-features", id: selectedFeatureId }, { selected: false })
+    if (!map || !selectedNodeId) {
+      // Clear previous selection
+      if (selectedFeatureId) {
+        clearFeatureSelection(map, selectedFeatureId)
+        setSelectedFeatureId(null)
+      }
+      return
     }
 
-    map.setFeatureState({ source: "geo-features", id: feature.id }, { selected: true })
-    setSelectedFeatureId(feature.id)
+    const feature = geoFeatures.find((f) => f.id === selectedNodeId)
+    if (feature) {
+      selectFeatureOnMap(map, feature.id)
+      setSelectedFeatureId(feature.id)
 
-    map.flyTo({
-      center: [feature.coordinates.longitude, feature.coordinates.latitude],
-      zoom: Math.max(map.getZoom(), 14),
-      duration: 800,
-    })
+      // Center map on selected feature
+      map.flyTo({
+        center: [feature.coordinates.longitude, feature.coordinates.latitude],
+        zoom: Math.max(map.getZoom(), 14),
+        duration: 1000,
+      })
+    }
   }, [selectedNodeId, map, geoFeatures, selectedFeatureId])
+
+  const setupMapInteractions = useCallback(
+    (mapInstance: mapboxgl.Map) => {
+      console.log("Setting up map interactions...")
+      const layers = ["trees", "plots", "regions"]
+
+      layers.forEach((layer) => {
+        // Change cursor on hover
+        mapInstance.on("mouseenter", layer, () => {
+          mapInstance.getCanvas().style.cursor = "pointer"
+        })
+
+        mapInstance.on("mouseleave", layer, () => {
+          mapInstance.getCanvas().style.cursor = ""
+        })
+
+        // Handle clicks
+        mapInstance.on("click", layer, (e) => {
+          if (e.features && e.features.length > 0) {
+            const feature = e.features[0]
+            const featureId = feature.id as string
+
+            // Clear previous selection
+            if (selectedFeatureId && selectedFeatureId !== featureId) {
+              clearFeatureSelection(mapInstance, selectedFeatureId)
+            }
+
+            // Select new feature
+            selectFeatureOnMap(mapInstance, featureId)
+            setSelectedFeatureId(featureId)
+
+            // Find the corresponding node and trigger selection
+            const geoFeature = geoFeatures.find((f) => f.id === featureId)
+            if (geoFeature && onFeatureSelect) {
+              onFeatureSelect(geoFeature.node)
+            }
+          }
+        })
+      })
+
+      // Handle map clicks (deselect)
+      mapInstance.on("click", (e) => {
+        // Check if click was on a feature
+        const features = mapInstance.queryRenderedFeatures(e.point, {
+          layers: ["trees", "plots", "regions"],
+        })
+
+        if (features.length === 0 && selectedFeatureId) {
+          clearFeatureSelection(mapInstance, selectedFeatureId)
+          setSelectedFeatureId(null)
+          if (onFeatureDeselect) {
+            onFeatureDeselect()
+          }
+        }
+      })
+    },
+    [geoFeatures, selectedFeatureId],
+  )
+
+  const selectFeatureOnMap = useCallback((mapInstance: mapboxgl.Map, featureId: string) => {
+    try {
+      mapInstance.setFeatureState({ source: "geo-features", id: featureId }, { selected: true })
+    } catch (error) {
+      console.error("Error selecting feature:", error)
+    }
+  }, [])
+
+  const clearFeatureSelection = useCallback((mapInstance: mapboxgl.Map, featureId: string) => {
+    try {
+      mapInstance.setFeatureState({ source: "geo-features", id: featureId }, { selected: false })
+    } catch (error) {
+      console.error("Error clearing feature selection:", error)
+    }
+  }, [])
+
+  // Callback handlers (to be set by parent component)
+  const [onFeatureSelect, setOnFeatureSelect] = useState<((node: GraphNode) => void) | null>(null)
+  const [onFeatureDeselect, setOnFeatureDeselect] = useState<(() => void) | null>(null)
+
+  const selectNodeOnMap = useCallback(
+    (nodeId: string) => {
+      if (!map) return
+
+      const feature = geoFeatures.find((f) => f.id === nodeId)
+      if (feature && selectedFeatureId !== nodeId) {
+        // Clear previous selection
+        if (selectedFeatureId) {
+          clearFeatureSelection(map, selectedFeatureId)
+        }
+
+        selectFeatureOnMap(map, nodeId)
+        setSelectedFeatureId(nodeId)
+
+        // Center map on selected feature
+        map.flyTo({
+          center: [feature.coordinates.longitude, feature.coordinates.latitude],
+          zoom: Math.max(map.getZoom(), 14),
+          duration: 1000,
+        })
+      }
+    },
+    [map, geoFeatures, selectedFeatureId, selectFeatureOnMap, clearFeatureSelection],
+  )
 
   // =========================================================================
   // 5.  CLEAN-UP ON UNMOUNT
@@ -142,8 +304,11 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
   useEffect(() => {
     return () => {
       if (mapRef.current) {
+        console.log("Cleaning up map...")
         mapRef.current.remove()
         mapRef.current = null
+        setMap(null)
+        initializationAttempted.current = false
       }
     }
   }, [])
@@ -153,7 +318,12 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
     map,
     geoFeatures,
     hasGeoData,
+    selectedFeatureId,
     isMapLoading,
     mapError,
+    setOnFeatureSelect,
+    setOnFeatureDeselect,
+    selectNodeOnMap,
+    mapboxToken,
   }
 }
