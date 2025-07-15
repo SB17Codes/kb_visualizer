@@ -7,6 +7,11 @@ import { createMapboxSource, addMapLayers, fitMapToBounds } from "@/lib/mapbox-u
 import type { GraphData, GraphNode } from "@/lib/types"
 import type { GeoFeature } from "@/lib/geo-utils"
 
+// Set access token at module level
+if (typeof window !== "undefined" && process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN) {
+  mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
+}
+
 export function useMapboxIntegration(data: GraphData | null, selectedNodeId: string | null) {
   // ---- state --------------------------------------------------------------
   const [map, setMap] = useState<mapboxgl.Map | null>(null)
@@ -19,7 +24,7 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
   // ---- refs ---------------------------------------------------------------
   const mapContainer = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
-  const initializationAttempted = useRef(false)
+  const initialized = useRef(false)
 
   // ---- token --------------------------------------------------------------
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
@@ -30,6 +35,7 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
     hasMap: !!map,
     isLoading: isMapLoading,
     error: mapError,
+    initialized: initialized.current,
   })
 
   // Callback handlers (to be set by parent component)
@@ -40,16 +46,17 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
   // 1.  INITIALIZE MAPBOX MAP
   // =========================================================================
   useEffect(() => {
-    if (!mapboxToken || !mapContainer.current || mapRef.current) return
+    // Only initialize once
+    if (!mapboxToken || !mapContainer.current || initialized.current || mapRef.current) {
+      return
+    }
 
     console.log("Starting Mapbox initialization...")
+    initialized.current = true
     setIsMapLoading(true)
     setMapError(null)
 
     try {
-      // Set the access token
-      mapboxgl.accessToken = mapboxToken
-
       console.log("Creating Mapbox instance...")
       const mapInstance = new mapboxgl.Map({
         container: mapContainer.current,
@@ -88,7 +95,7 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
 
       // Timeout fallback
       const timeout = setTimeout(() => {
-        if (!map) {
+        if (isMapLoading) {
           console.error("Map loading timeout")
           setMapError("Map loading timeout - please check your token and internet connection")
           setIsMapLoading(false)
@@ -102,8 +109,9 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
       console.error("Error initializing map:", error)
       setMapError(`Initialization error: ${error instanceof Error ? error.message : "Unknown error"}`)
       setIsMapLoading(false)
+      initialized.current = false // Allow retry
     }
-  }, [mapboxToken]) // Remove isMapLoading from dependencies
+  }, [mapboxToken, isMapLoading])
 
   // =========================================================================
   // 2.  CONVERT NODES ➜ GEO FEATURES WHEN THE DATA CHANGES
@@ -120,7 +128,7 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
     console.log(`Extracted ${features.length} geo features`)
     setGeoFeatures(features)
     setHasGeoData(features.length > 0)
-  }, [data]) // Only depend on data, not map
+  }, [data])
 
   const setupMapInteractions = useCallback(
     (mapInstance: mapboxgl.Map) => {
@@ -128,11 +136,6 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
       const layers = ["trees", "plots", "regions"]
 
       layers.forEach((layer) => {
-        // Remove existing listeners first
-        mapInstance.off("mouseenter", layer)
-        mapInstance.off("mouseleave", layer)
-        mapInstance.off("click", layer)
-
         // Change cursor on hover
         mapInstance.on("mouseenter", layer, () => {
           mapInstance.getCanvas().style.cursor = "pointer"
@@ -167,7 +170,6 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
       })
 
       // Handle map clicks (deselect)
-      mapInstance.off("click") // Remove existing listener
       mapInstance.on("click", (e) => {
         // Check if click was on a feature
         const features = mapInstance.queryRenderedFeatures(e.point, {
@@ -232,7 +234,7 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
   useEffect(() => {
     if (!map || !selectedNodeId) {
       // Clear previous selection
-      if (selectedFeatureId) {
+      if (selectedFeatureId && map) {
         clearFeatureSelection(map, selectedFeatureId)
         setSelectedFeatureId(null)
       }
@@ -304,7 +306,7 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
         mapRef.current.remove()
         mapRef.current = null
         setMap(null)
-        initializationAttempted.current = false
+        initialized.current = false
       }
     }
   }, [])
