@@ -1,17 +1,11 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import mapboxgl from "mapbox-gl"
 import { extractGeoFeatures, calculateBounds } from "@/lib/geo-utils"
 import { createMapboxSource, addMapLayers, fitMapToBounds } from "@/lib/mapbox-utils"
 import type { GraphData, GraphNode } from "@/lib/types"
 import type { GeoFeature } from "@/lib/geo-utils"
-import type mapboxgl from "mapbox-gl"
-
-declare global {
-  interface Window {
-    mapboxgl: any
-  }
-}
 
 export function useMapboxIntegration(data: GraphData | null, selectedNodeId: string | null) {
   const [map, setMap] = useState<mapboxgl.Map | null>(null)
@@ -47,36 +41,9 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
 
     const initializeMap = async () => {
       try {
-        console.log("Starting Mapbox initialization...")
+        console.log("Starting Mapbox initialization with npm package...")
 
-        // Load Mapbox GL if not already loaded
-        if (!window.mapboxgl) {
-          console.log("Loading Mapbox GL script...")
-          const script = document.createElement("script")
-          script.src = "https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"
-          script.async = true
-
-          await new Promise<void>((resolve, reject) => {
-            script.onload = () => {
-              console.log("Mapbox GL script loaded")
-              resolve()
-            }
-            script.onerror = () => {
-              console.error("Failed to load Mapbox GL script")
-              reject(new Error("Failed to load Mapbox GL"))
-            }
-            document.head.appendChild(script)
-          })
-
-          // Small delay to ensure script is fully loaded
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-
-        if (!window.mapboxgl) {
-          throw new Error("Mapbox GL not available after loading")
-        }
-
-        const mapboxgl = window.mapboxgl
+        // Set the access token
         mapboxgl.accessToken = mapboxToken
 
         console.log("Creating Mapbox instance...")
@@ -113,16 +80,21 @@ export function useMapboxIntegration(data: GraphData | null, selectedNodeId: str
           setIsMapLoading(false)
         })
 
-        // Handle style load errors
+        // Handle style load
         mapInstance.on("style.load", () => {
           console.log("Map style loaded")
+        })
+
+        // Handle style errors
+        mapInstance.on("styleimagemissing", (e) => {
+          console.warn("Style image missing:", e.id)
         })
 
         // Timeout fallback
         setTimeout(() => {
           if (isMapLoading && !mapRef.current) {
             console.error("Map loading timeout")
-            setMapError("Map loading timeout - please check your internet connection")
+            setMapError("Map loading timeout - please check your token and internet connection")
             setIsMapLoading(false)
           }
         }, 15000) // 15 second timeout
