@@ -1,111 +1,68 @@
-import mapboxgl from "mapbox-gl"
 import type { GeoFeature, GeoJSON } from "./geo-utils"
 
+/**
+ * Builds a GeoJSON source from our extracted features.
+ */
 export function createMapboxSource(features: GeoFeature[]): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: features.map((feature) => ({
+    features: features.map((f) => ({
       type: "Feature",
-      id: feature.id,
+      id: f.id,
       geometry: {
         type: "Point",
-        coordinates: [feature.coordinates.longitude, feature.coordinates.latitude],
+        coordinates: [f.coordinates.longitude, f.coordinates.latitude],
       },
       properties: {
-        id: feature.id,
-        type: feature.type,
-        name: feature.node.name,
-        entityType: feature.node.entityType,
-        family: feature.node.taxonomicInfo?.["dwc:family"] || null,
-        genus: feature.node.taxonomicInfo?.["dwc:genus"] || null,
-        species: feature.node.taxonomicInfo?.["dwc:specificEpithet"] || null,
-        plotInfo: feature.node.plotInfo || null,
+        id: f.id,
+        type: f.type,
+        name: f.node.name,
+        family: f.node.taxonomicInfo?.["dwc:family"] ?? null,
       },
     })),
   }
 }
 
-export function addMapLayers(map: mapboxgl.Map) {
-  // Add trees layer
-  map.addLayer({
-    id: "trees",
-    type: "circle",
-    source: "geo-features",
-    filter: ["==", ["get", "type"], "tree"],
-    paint: {
-      "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 9, 6],
-      "circle-color": [
-        "case",
-        ["boolean", ["feature-state", "selected"], false],
-        "#FF8C00",
-        [
-          "match",
-          ["get", "family"],
-          "Fabaceae",
-          "#16a34a",
-          "Burseraceae",
-          "#92400e",
-          "Lecythidaceae",
-          "#7c3aed",
-          "Myristicaceae",
-          "#dc2626",
-          "Chrysobalanaceae",
-          "#d97706",
-          "Lauraceae",
-          "#2563eb",
-          "Arecaceae",
-          "#059669",
-          "#22c55e", // default green
-        ],
-      ],
-      "circle-stroke-width": ["case", ["boolean", ["feature-state", "selected"], false], 3, 1],
-      "circle-stroke-color": ["case", ["boolean", ["feature-state", "selected"], false], "#FF8C00", "#ffffff"],
-      "circle-opacity": 0.8,
-      "circle-stroke-opacity": 1,
-    },
+/**
+ * Adds three simple circle layers (trees, plots, regions).
+ * NB:  The map instance already has the "geo-features" source attached.
+ */
+export function addMapLayers(map: any) {
+  const makePaint = (color: string, radius: number) => ({
+    "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], radius * 1.5, radius],
+    "circle-color": ["case", ["boolean", ["feature-state", "selected"], false], "#FF8C00", color],
+    "circle-stroke-width": ["case", ["boolean", ["feature-state", "selected"], false], 3, 1],
+    "circle-stroke-color": ["case", ["boolean", ["feature-state", "selected"], false], "#FF8C00", "#ffffff"],
+    "circle-opacity": 0.8,
   })
 
-  // Add plots layer
-  map.addLayer({
-    id: "plots",
-    type: "circle",
-    source: "geo-features",
-    filter: ["==", ["get", "type"], "plot"],
-    paint: {
-      "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
-      "circle-color": ["case", ["boolean", ["feature-state", "selected"], false], "#FF8C00", "#3b82f6"],
-      "circle-stroke-width": ["case", ["boolean", ["feature-state", "selected"], false], 3, 2],
-      "circle-stroke-color": ["case", ["boolean", ["feature-state", "selected"], false], "#FF8C00", "#ffffff"],
-      "circle-opacity": 0.7,
-      "circle-stroke-opacity": 1,
-    },
-  })
+  if (!map.getLayer("trees")) {
+    map.addLayer({
+      id: "trees",
+      type: "circle",
+      source: "geo-features",
+      filter: ["==", ["get", "type"], "tree"],
+      paint: makePaint("#22c55e", 6),
+    })
+  }
 
-  // Add regions layer
-  map.addLayer({
-    id: "regions",
-    type: "circle",
-    source: "geo-features",
-    filter: ["==", ["get", "type"], "region"],
-    paint: {
-      "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 15, 10],
-      "circle-color": ["case", ["boolean", ["feature-state", "selected"], false], "#FF8C00", "#6366f1"],
-      "circle-stroke-width": ["case", ["boolean", ["feature-state", "selected"], false], 3, 2],
-      "circle-stroke-color": ["case", ["boolean", ["feature-state", "selected"], false], "#FF8C00", "#ffffff"],
-      "circle-opacity": 0.6,
-      "circle-stroke-opacity": 1,
-    },
-  })
-}
+  if (!map.getLayer("plots")) {
+    map.addLayer({
+      id: "plots",
+      type: "circle",
+      source: "geo-features",
+      filter: ["==", ["get", "type"], "plot"],
+      paint: makePaint("#3b82f6", 8),
+    })
+  }
 
-export function fitMapToBounds(
-  map: mapboxgl.Map,
-  bounds: { minLng: number; maxLng: number; minLat: number; maxLat: number },
-) {
-  const mapBounds = new mapboxgl.LngLatBounds([bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat])
-
-  map.fitBounds(mapBounds, {
-    padding: { top: 50, bottom: 50, left: 50, right: 50 },
-    maxZoom: 15,
-  })
+  if (!map.getLayer("regions")) {
+    map.addLayer({
+      id: "regions",
+      type: "circle",
+      source: "geo-features",
+      filter: ["==", ["get", "type"], "region"],
+      paint: makePaint("#6366f1", 10),
+    })
+  }
 }
