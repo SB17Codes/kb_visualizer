@@ -14,8 +14,7 @@ import { useVirtualGraph } from "@/hooks/use-virtual-graph"
 import { useGraphNavigation } from "@/hooks/use-graph-navigation"
 import { getEntityCounts } from "@/lib/graph-utils"
 import type { SelectedElement } from "@/lib/types"
-import { MapboxViewer } from "@/components/map/mapbox-viewer"
-import { MapLegend } from "@/components/map/map-legend"
+import { SimpleMapViewer } from "@/components/map/simple-map-viewer"
 import { extractGeoFeatures } from "@/lib/geo-utils"
 
 export default function TTLVisualizerPage() {
@@ -164,20 +163,13 @@ export default function TTLVisualizerPage() {
                   selectedId={navigation.currentNode?.id || null}
                 />
               ) : (
-                <>
-                  <MapboxViewer
-                    data={displayData}
-                    selectedNodeId={navigation.currentNode?.id || null}
-                    onNodeSelect={(node) => navigation.navigateTo(node)}
-                    onNodeDeselect={() => setSelectedElement(null)}
-                    className="w-full h-full"
-                  />
-                  <MapLegend
-                    treesCount={geoFeatures.filter((f) => f.type === "tree").length}
-                    plotsCount={geoFeatures.filter((f) => f.type === "plot").length}
-                    regionsCount={geoFeatures.filter((f) => f.type === "region").length}
-                  />
-                </>
+                <SimpleMapViewer
+                  data={displayData}
+                  selectedNodeId={navigation.currentNode?.id || null}
+                  onNodeSelect={(node) => navigation.navigateTo(node)}
+                  onNodeDeselect={() => setSelectedElement(null)}
+                  className="w-full h-full"
+                />
               )
             ) : (
               <EmptyState tripleLimit={tripleLimit} uploadError={fileProcessing.uploadError} />
