@@ -1,16 +1,23 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     // Handle mapbox-gl properly
     config.resolve.alias = {
       ...config.resolve.alias,
       'mapbox-gl': 'mapbox-gl/dist/mapbox-gl.js'
     }
     
+    // Ignore mapbox-gl on server-side
+    if (isServer) {
+      config.externals = config.externals || []
+      config.externals.push({
+        'mapbox-gl': 'mapbox-gl',
+        'react-mapbox-gl': 'react-mapbox-gl'
+      })
+    }
+    
     return config
   },
-  // These ESM packages contain `window`, `document`, and worker code that
-  // must be transpiled for both webpack & the edge runtime.
   transpilePackages: ['mapbox-gl', 'react-mapbox-gl'],
   eslint: {
     ignoreDuringBuilds: true,

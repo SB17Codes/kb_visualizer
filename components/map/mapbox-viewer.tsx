@@ -1,19 +1,11 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from "react"
-import dynamic from "next/dynamic"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { MapPin, TreePine, MapIcon, AlertCircle } from "lucide-react"
 import { extractGeoFeatures, calculateBounds } from "@/lib/geo-utils"
 import type { GraphData, GraphNode } from "@/lib/types"
-
-// Dynamically import react-mapbox-gl to avoid SSR issues
-const ReactMapboxGl = dynamic(() => import("react-mapbox-gl"), { ssr: false })
-const Layer = dynamic(() => import("react-mapbox-gl").then((mod) => mod.Layer), { ssr: false })
-const Feature = dynamic(() => import("react-mapbox-gl").then((mod) => mod.Feature), { ssr: false })
-const Popup = dynamic(() => import("react-mapbox-gl").then((mod) => mod.Popup), { ssr: false })
-const ZoomControl = dynamic(() => import("react-mapbox-gl").then((mod) => mod.ZoomControl), { ssr: false })
 
 interface MapboxViewerProps {
   data: GraphData | null
@@ -25,26 +17,56 @@ interface MapboxViewerProps {
 
 export function MapboxViewer({ data, selectedNodeId, onNodeSelect, onNodeDeselect, className }: MapboxViewerProps) {
   const [isClient, setIsClient] = useState(false)
-  const [Map, setMap] = useState<any>(null)
+  const [MapComponents, setMapComponents] = useState<any>(null)
   const [selectedFeature, setSelectedFeature] = useState<any>(null)
   const [hoveredFeature, setHoveredFeature] = useState<any>(null)
+  const [mapError, setMapError] = useState<string | null>(null)
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
 
-  // Ensure we're on the client side and create the Map component
+  // Load Mapbox components dynamically
   useEffect(() => {
     setIsClient(true)
-    if (mapboxToken && typeof window !== "undefined") {
-      const MapComponent = ReactMapboxGl({
-        accessToken: mapboxToken,
-        scrollZoom: true,
-        dragRotate: false,
-        pitchWithRotate: false,
-        attributionControl: true,
-        logoPosition: "bottom-left",
-      })
-      setMap(() => MapComponent)
+
+    if (!mapboxToken) {
+      setMapError("Mapbox token not configured")
+      return
     }
+
+    const loadMapbox = async () => {
+      try {
+        // Import all components at once to avoid multiple dynamic imports
+        const [ReactMapboxGl, { Layer }, { Feature }, { Popup }, { ZoomControl }] = await Promise.all([
+          import("react-mapbox-gl").then((mod) => mod.default),
+          import("react-mapbox-gl"),
+          import("react-mapbox-gl"),
+          import("react-mapbox-gl"),
+          import("react-mapbox-gl"),
+        ])
+
+        const Map = ReactMapboxGl({
+          accessToken: mapboxToken,
+          scrollZoom: true,
+          dragRotate: false,
+          pitchWithRotate: false,
+          attributionControl: true,
+          logoPosition: "bottom-left",
+        })
+
+        setMapComponents({
+          Map,
+          Layer,
+          Feature,
+          Popup,
+          ZoomControl,
+        })
+      } catch (error) {
+        console.error("Failed to load Mapbox:", error)
+        setMapError("Failed to load map components")
+      }
+    }
+
+    loadMapbox()
   }, [mapboxToken])
 
   const geoFeatures = useMemo(() => {
@@ -177,7 +199,7 @@ export function MapboxViewer({ data, selectedNodeId, onNodeSelect, onNodeDeselec
     )
   }
 
-  if (!mapboxToken) {
+  if (mapError || !mapboxToken) {
     return (
       <Card className={className}>
         <CardHeader>
@@ -189,7 +211,7 @@ export function MapboxViewer({ data, selectedNodeId, onNodeSelect, onNodeDeselec
         <CardContent className="flex items-center justify-center h-64">
           <div className="text-center text-muted-foreground">
             <AlertCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
-            <p>Mapbox token not configured</p>
+            <p>{mapError || "Mapbox token not configured"}</p>
             <p className="text-sm">Please add NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN to environment variables</p>
           </div>
         </CardContent>
@@ -217,7 +239,7 @@ export function MapboxViewer({ data, selectedNodeId, onNodeSelect, onNodeDeselec
     )
   }
 
-  if (!Map) {
+  if (!MapComponents) {
     return (
       <Card className={className}>
         <CardHeader>
@@ -235,6 +257,8 @@ export function MapboxViewer({ data, selectedNodeId, onNodeSelect, onNodeDeselec
       </Card>
     )
   }
+
+  const { Map, Layer, Feature, Popup, ZoomControl } = MapComponents
 
   const treesCount = geoFeatures.filter((f) => f.type === "tree").length
   const plotsCount = geoFeatures.filter((f) => f.type === "plot").length
