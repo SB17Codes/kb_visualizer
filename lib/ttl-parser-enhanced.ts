@@ -81,6 +81,7 @@ function classifyRelationship(predicate: string): "spatial" | "taxonomic" | "obs
 
 export class EnhancedTTLParser {
   private worker: Worker | null = null
+  private parsePromises = new Map<string, Promise<GraphData>>() // Track ongoing parsing operations
 
   constructor() {
     if (typeof Worker !== "undefined") {
@@ -94,17 +95,41 @@ export class EnhancedTTLParser {
   async parseWithCache(ttlString: string, fileHash: string, limit = 1000): Promise<GraphData> {
     const cacheKey = `ttl-${fileHash}-${limit}`
 
+    // Check if we're already parsing this exact combination
+    if (this.parsePromises.has(cacheKey)) {
+      console.log("Parse already in progress, waiting for completion...")
+      return this.parsePromises.get(cacheKey)!
+    }
+
     // Try to get from cache first
     const cached = cacheManager.get(cacheKey, fileHash)
     if (cached) {
+      console.log("Returning cached result for:", cacheKey)
       return cached
     }
 
+    console.log("Starting new parse operation for:", cacheKey)
+
+    // Create and store the parsing promise
+    const parsePromise = this.performParse(ttlString, fileHash, limit, cacheKey)
+    this.parsePromises.set(cacheKey, parsePromise)
+
+    try {
+      const result = await parsePromise
+      return result
+    } finally {
+      // Clean up the promise after completion
+      this.parsePromises.delete(cacheKey)
+    }
+  }
+
+  private async performParse(ttlString: string, fileHash: string, limit: number, cacheKey: string): Promise<GraphData> {
     // Parse the TTL - always use main thread for now to avoid worker issues
     const result = await parseTTL(ttlString, limit)
 
     // Cache the result
     cacheManager.set(cacheKey, result, fileHash)
+    console.log("Cached parse result for:", cacheKey)
 
     return result
   }
@@ -140,6 +165,8 @@ export class EnhancedTTLParser {
       this.worker.terminate()
       this.worker = null
     }
+    // Clear any pending promises
+    this.parsePromises.clear()
   }
 
   private parseTTLProgressive(
