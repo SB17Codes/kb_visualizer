@@ -14,7 +14,7 @@ import { useVirtualGraph } from "@/hooks/use-virtual-graph"
 import { useGraphNavigation } from "@/hooks/use-graph-navigation"
 import { getEntityCounts } from "@/lib/graph-utils"
 import type { SelectedElement } from "@/lib/types"
-import { SimpleMapViewer } from "@/components/map/simple-map-viewer"
+import { LeafletViewer } from "@/components/map/leaflet-viewer"
 import { extractGeoFeatures } from "@/lib/geo-utils"
 
 export default function TTLVisualizerPage() {
@@ -163,7 +163,7 @@ export default function TTLVisualizerPage() {
                   selectedId={navigation.currentNode?.id || null}
                 />
               ) : (
-                <SimpleMapViewer
+                <LeafletViewer
                   data={displayData}
                   selectedNodeId={navigation.currentNode?.id || null}
                   onNodeSelect={(node) => navigation.navigateTo(node)}
